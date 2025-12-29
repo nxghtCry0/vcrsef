@@ -1,1 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Tejas GPT II</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+        
+        /* CSS Variables for Theme Support */
+        :root {
+            --bg: #09090b;
+            --panel: #18181b;
+            --border: #27272a;
+            --text-main: #e4e4e7;
+            --text-muted: #a1a1aa;
+            --accent: #10b981; /* Green accent */
+            --accent-glow: rgba(16, 185, 129, 0.2);
+            --input-bg: #101012;
+            --hover-bg: rgba(255,255,255,0.05);
+            --scroll-thumb: #52525b;
+        }
 
+        .light-mode {
+            --bg: #ffffff;
+            --panel: #f4f4f5;
+            --border: #e4e4e7;
+            --text-main: #18181b;
+            --text-muted: #71717a;
+            --accent: #059669;
+            --accent-glow: rgba(5, 150, 105, 0.2);
+            --input-bg: #ffffff;
+            --hover-bg: rgba(0,0,0,0.05);
+            --scroll-thumb: #d4d4d8;
+        }
+
+        body { background: var(--bg); color: var(--text-main); font-family: 'Inter', sans-serif; overflow: hidden; transition: background 0.3s, color 0.3s; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .glass { background: var(--panel); border: 1px solid var(--border); }
+        .btn-hover { transition: all 0.2s; }
+        .btn-hover:active { transform: scale(0.96); }
+        
+        /* Custom Checkbox */
+        .custom-checkbox { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; border: 1px solid var(--text-muted); border-radius: 3px; cursor: pointer; display: grid; place-content: center; }
+        .custom-checkbox::before { content: ""; width: 8px; height: 8px; transform: scale(0); transition: 120ms transform ease-in-out; background: var(--accent); clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%); }
+        .custom-checkbox:checked::before { transform: scale(1); }
+        .custom-checkbox:checked { border-color: var(--accent); }
+
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg); }
+        ::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 4px; border: 2px solid var(--bg); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect, useRef, Component } = React;
+        const API = "http://127.0.0.1:4141";
+        const WS_API = "ws://127.0.0.1:4141/ws/terminal";
+        const UI_VERSION = "1.0.0";
+
+        class ErrorBoundary extends Component {
+            constructor(props) { super(props); this.state = { hasError: false }; }
+            static getDerivedStateFromError(error) { return { hasError: true }; }
+            render() { return this.state.hasError ? <div className="p-10 text-red-500">UI Crashed. Please Restart.</div> : this.props.children; }
+        }
+
+        const Icon = ({n, s=16, c=""}) => {
+            useEffect(() => lucide.createIcons(), [n]);
+            return <i data-lucide={n} width={s} height={s} className={c}></i>
+        };
+
+        const Terminal = ({ theme }) => {
+            const [lines, setLines] = useState([]);
+            const [input, setInput] = useState("");
+            const ws = useRef(null);
+            const bottomRef = useRef(null);
+
+            useEffect(() => {
+                ws.current = new WebSocket(WS_API);
+                ws.current.onmessage = (e) => setLines(p => [...p, e.data].slice(-300));
+                return () => ws.current?.close();
+            }, []);
+
+            useEffect(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), [lines]);
+
+            return (
+                <div className={`flex-1 flex flex-col mono text-xs p-4 ${theme === 'light' ? 'bg-white text-gray-800' : 'bg-black text-gray-300'}`}>
+                    <div className="flex-1 overflow-y-auto space-y-1">
+                        {lines.map((l, i) => <div key={i} className="whitespace-pre-wrap break-all">{l}</div>)}
+                        <div ref={bottomRef}></div>
+                    </div>
+                    <div className="flex items-center gap-2 mt-2 pt-2 border-t border-[var(--border)]">
+                        <span className="text-[var(--accent)] font-bold">$</span>
+                        <input value={input} onChange={e => setInput(e.target.value)} 
+                            onKeyDown={e => { if(e.key === 'Enter') { ws.current.send(input); setLines(p=>[...p, `> ${input}\n`]); setInput(""); } }} 
+                            className="flex-1 bg-transparent outline-none" autoFocus />
+                    </div>
+                </div>
+            );
+        };
+
+        const FileNode = ({ node, depth=0, selected, toggleSelect }) => {
+            const [expanded, setExpanded] = useState(false);
+            if (!node) return null;
+            const isChecked = selected.has(node.path);
+
+            return (
+                <div className="select-none">
+                    <div className="flex items-center gap-3 py-1.5 px-2 hover:bg-[var(--hover-bg)] group"
+                         style={{paddingLeft: depth*16+12+'px'}}>
+                        
+                        <input type="checkbox" 
+                            className="custom-checkbox"
+                            checked={isChecked} 
+                            onChange={() => toggleSelect(node)} 
+                        />
+
+                        <div className="flex-1 flex items-center gap-2 cursor-pointer" 
+                             onClick={() => node.type === 'folder' && setExpanded(!expanded)}>
+                             
+                            <Icon n={node.type==='folder' ? (expanded ? "folder-open" : "folder") : "file-code"} 
+                                  s={15} c={node.type === 'folder' ? "text-[var(--accent)]" : "text-[var(--text-muted)]"} />
+                            
+                            <span className={`text-[13px] truncate ${isChecked ? 'text-[var(--text-main)] font-medium' : 'text-[var(--text-muted)]'}`}>
+                                {node.name}
+                            </span>
+                        </div>
+                    </div>
+                    {expanded && node.children && (
+                        <div className="border-l border-[var(--border)] ml-4">
+                            {node.children.map(c => <FileNode key={c.path} node={c} depth={depth+1} selected={selected} toggleSelect={toggleSelect}/>)}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [tab, setTab] = useState('editor');
+            const [config, setConfig] = useState(null);
+            const [files, setFiles] = useState([]);
+            const [selected, setSelected] = useState(new Set());
+            const [xml, setXml] = useState("");
+            const [logs, setLogs] = useState([]);
+            const [backups, setBackups] = useState([]);
+            const [status, setStatus] = useState("");
+            const [gitState, setGitState] = useState({status:'', log:'', branch:''});
+            const [search, setSearch] = useState("");
+            const [refreshing, setRefreshing] = useState(false);
+
+            useEffect(() => {
+                fetch(`${API}/api/init`).then(r=>r.json()).then(d => { setConfig(d.config); fetchFiles(); });
+                checkUiUpdates();
+            }, []);
+
+            const checkUiUpdates = async () => {
+                try {
+                    const r = await fetch("https://github.com/nxghtCry0/vcrsef/raw/refs/heads/main/ui.txt");
+                    if (r.ok) {
+                        const ver = (await r.text()).trim();
+                        if (ver !== UI_VERSION) {
+                            if (confirm(`New UI Version ${ver} Available! Update now?`)) {
+                                setStatus("Updating UI...");
+                                const upRes = await fetch(`${API}/api/update_ui`, {method: 'POST'});
+                                const upData = await upRes.json();
+                                if (upData.success) {
+                                    alert("Update Complete! Refreshing...");
+                                    window.location.reload();
+                                } else {
+                                    alert("Update Failed: " + upData.error);
+                                }
+                            }
+                        }
+                    }
+                } catch(e) { console.log("UI Update check failed"); }
+            };
+
+            useEffect(() => {
+                if(config?.theme) document.body.classList.toggle('light-mode', config.theme === 'light');
+            }, [config?.theme]);
+
+            const fetchFiles = async () => {
+                const r = await fetch(`${API}/api/files`);
+                const d = await r.json();
+                setFiles(Array.isArray(d) ? d : []);
+            };
+
+            const handleRefresh = async () => {
+                setRefreshing(true);
+                await fetchFiles();
+                setTimeout(() => setRefreshing(false), 600);
+            };
+
+            const fetchBackups = () => fetch(`${API}/api/backups`).then(r=>r.json()).then(setBackups);
+            const fetchGit = () => fetch(`${API}/api/git/status`).then(r=>r.json()).then(setGitState);
+
+            const toggleSelect = (node) => {
+                const newSet = new Set(selected);
+                const isSelected = newSet.has(node.path);
+                const process = (n, select) => {
+                    if (select) newSet.add(n.path);
+                    else newSet.delete(n.path);
+                    if (n.children) n.children.forEach(c => process(c, select));
+                };
+                if (node.type === 'folder') process(node, !isSelected);
+                else {
+                    if (isSelected) newSet.delete(node.path);
+                    else newSet.add(node.path);
+                }
+                setSelected(newSet);
+            };
+
+            const copyContext = async () => {
+                setStatus("Generating Prompt...");
+                const paths = Array.from(selected);
+                let fullPrompt = config.system_prompt_template || "";
+                
+                if (paths.length > 0) {
+                    try {
+                        const r = await fetch(`${API}/api/files/read`, {
+                            method: 'POST', 
+                            body: JSON.stringify({paths: paths})
+                        });
+                        const d = await r.json();
+                        fullPrompt += "\n\n--- PROJECT CONTEXT ---\n";
+                        for(let p in d) {
+                            fullPrompt += `--- FILE: ${p} ---\n${d[p]}\n--- END FILE: ${p} ---\n`;
+                        }
+                    } catch(e) { 
+                        setStatus("Error reading files");
+                        return;
+                    }
+                } else {
+                    fullPrompt += "\n\n(No files selected for context)";
+                }
+
+                try {
+                    await navigator.clipboard.writeText(fullPrompt);
+                    setStatus(`Copied! (${paths.length} files included)`);
+                } catch (err) {
+                    const ta = document.createElement("textarea");
+                    ta.value = fullPrompt;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand("copy");
+                    document.body.removeChild(ta);
+                    setStatus("Copied (Fallback)");
+                }
+                setTimeout(() => setStatus(""), 3000);
+            };
+
+            const execute = async () => {
+                if (config.clear_logs_on_execute) {
+                    setLogs(["⏳ Processing..."]);
+                } else {
+                    setLogs(p => ["⏳ Processing...", ...p]);
+                }
+
+                try {
+                    const r = await fetch(`${API}/api/execute`, {method:'POST', body:JSON.stringify({text: xml})});
+                    const d = await r.json();
+                    
+                    if (config.clear_logs_on_execute) {
+                        setLogs(d.logs || []);
+                    } else {
+                        setLogs(p => [...(d.logs||[]), ...p]);
+                    }
+                    
+                    fetchFiles();
+                } catch(e) { 
+                    setLogs(p => ["❌ Network Error", ...p]); 
+                }
+            };
+
+            const gitAction = (act, msg=null) => {
+                setStatus(`Git: ${act}...`);
+                fetch(`${API}/api/git/action`, {method:'POST', body:JSON.stringify({action:act, message:msg})})
+                    .then(r=>r.json())
+                    .then(() => { fetchGit(); setStatus("Action Complete"); });
+            };
+
+            const updateConfig = (key, val) => {
+                const newConf = {...config, [key]: val};
+                setConfig(newConf);
+                fetch(`${API}/api/config`, {method:'POST', body:JSON.stringify(newConf)});
+            };
+
+            if(!config) return <div className="h-screen flex items-center justify-center text-[var(--text-muted)]">Connecting to Tejas GPT II...</div>;
+
+            return (
+                <div className="flex h-screen text-sm">
+                    {/* NAV */}
+                    <div className="w-16 flex flex-col items-center py-6 gap-6 border-r border-[var(--border)] bg-[var(--panel)] z-10">
+                        <div className="font-bold text-[var(--accent)] tracking-widest text-[10px] mb-2">TEJAS</div>
+                        {['editor', 'files', 'git', 'terminal', 'backups', 'settings'].map(t => (
+                            <button key={t} onClick={() => {setTab(t); if(t==='git') fetchGit(); if(t==='backups') fetchBackups();}} 
+                                className={`p-3 rounded-xl btn-hover transition-colors ${tab===t ? 'bg-[var(--accent)] text-white shadow-lg' : 'text-[var(--text-muted)] hover:text-[var(--text-main)] hover:bg-[var(--hover-bg)]'}`}>
+                                <Icon n={t==='editor'?'zap':t==='files'?'folder-kanban':t==='git'?'git-branch':t==='terminal'?'terminal-square':t==='backups'?'history':'settings'} />
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* CONTENT */}
+                    <div className="flex-1 flex flex-col min-w-0">
+                        <header className="h-14 border-b border-[var(--border)] flex items-center px-6 justify-between bg-[var(--bg)]">
+                            <div className="flex items-center gap-4">
+                                <h2 className="font-bold uppercase tracking-widest text-[var(--text-muted)] text-xs">{tab}</h2>
+                                {status && <span className="text-xs text-[var(--accent)] animate-pulse font-mono">[{status}]</span>}
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <button onClick={() => fetch(`${API}/api/browse_cwd`, {method:'POST'}).then(r=>r.json()).then(d=>{if(d.success){setConfig(p=>({...p, cwd:d.cwd})); fetchFiles();}})}
+                                    className="p-1.5 hover:bg-[var(--hover-bg)] rounded text-[var(--text-muted)] hover:text-[var(--text-main)]">
+                                    <Icon n="folder-search" s={16}/>
+                                </button>
+                                <span className="text-[11px] font-mono text-[var(--text-muted)] truncate max-w-xs">{config.cwd}</span>
+                            </div>
+                        </header>
+
+                        <main className="flex-1 overflow-hidden relative flex flex-col">
+                            {tab === 'editor' && (
+                                <div className="flex-1 flex flex-col p-6 gap-4">
+                                    <textarea value={xml} onChange={e => setXml(e.target.value)} 
+                                        placeholder="Paste AI XML Response here..."
+                                        className="flex-1 bg-[var(--input-bg)] p-4 outline-none resize-none font-mono text-[var(--text-main)] border border-[var(--border)] rounded-lg focus:border-[var(--accent)] transition-colors" />
+                                    
+                                    <div className="flex gap-4 h-64 shrink-0">
+                                        <div className="flex-1 glass rounded-lg flex flex-col bg-[var(--input-bg)] overflow-hidden">
+                                            <div className="flex justify-between items-center px-3 py-2 border-b border-[var(--border)] bg-[var(--panel)]">
+                                                <span className="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider">Execution Logs</span>
+                                                <button onClick={() => setLogs([])} className="text-[var(--text-muted)] hover:text-red-500 transition-colors p-1" title="Clear Logs">
+                                                    <Icon n="trash-2" s={14} />
+                                                </button>
+                                            </div>
+                                            
+                                            <div className="flex-1 overflow-y-auto p-3 font-mono text-xs">
+                                                {logs.length === 0 && <span className="text-[var(--text-muted)] opacity-50 italic">Waiting for input...</span>}
+                                                {logs.map((l,i) => <div key={i} className="mb-1 text-[var(--text-muted)] border-l-2 border-[var(--border)] pl-2 break-all">{l}</div>)}
+                                            </div>
+                                        </div>
+
+                                        <button onClick={execute} className="w-36 bg-[var(--accent)] hover:opacity-90 text-white font-bold rounded-lg shadow-lg btn-hover flex flex-col items-center justify-center gap-1">
+                                            <Icon n="play" s={20} />
+                                            <span>EXECUTE</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {tab === 'files' && (
+                                <div className="flex-1 flex flex-col p-6">
+                                    <div className="flex justify-between mb-4 gap-2 items-center">
+                                        <div className="relative flex-1">
+                                            <Icon n="search" s={14} c="absolute left-3 top-2.5 text-[var(--text-muted)]"/>
+                                            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Filter file tree..." 
+                                                className="w-full bg-[var(--input-bg)] pl-9 pr-4 py-2 rounded-lg border border-[var(--border)] outline-none text-[var(--text-main)] focus:border-[var(--accent)]"/>
+                                        </div>
+                                        
+                                        <button onClick={handleRefresh} 
+                                            className="p-2 bg-[var(--panel)] border border-[var(--border)] rounded-lg text-[var(--text-muted)] hover:text-[var(--accent)] hover:border-[var(--accent)] btn-hover"
+                                            title="Refresh File Tree">
+                                            <Icon n="refresh-cw" s={16} c={refreshing ? "animate-spin" : ""} />
+                                        </button>
+
+                                        <button onClick={copyContext} className="px-5 py-2 bg-[var(--panel)] text-[var(--accent)] border border-[var(--border)] rounded-lg text-xs font-bold hover:bg-[var(--hover-bg)] btn-hover flex items-center gap-2">
+                                            <Icon n="copy" s={14} />
+                                            COPY PROMPT ({selected.size})
+                                        </button>
+                                    </div>
+                                    <div className="flex-1 overflow-y-auto glass rounded-lg p-2 bg-[var(--panel)]">
+                                        {files.filter(n => !search || n.name.toLowerCase().includes(search.toLowerCase())).map(n => (
+                                            <FileNode key={n.path} node={n} selected={selected} toggleSelect={toggleSelect} />
+                                        ))}
+                                        {files.length === 0 && <div className="p-4 text-center text-[var(--text-muted)]">Empty directory</div>}
+                                    </div>
+                                </div>
+                            )}
+
+                            {tab === 'git' && (
+                                <div className="flex-1 flex p-6 gap-6">
+                                    <div className="w-80 flex flex-col gap-4">
+                                        <div className="glass p-4 rounded-lg flex-1 flex flex-col bg-[var(--panel)]">
+                                            <div className="flex justify-between items-center mb-2">
+                                                <div className="text-xs font-bold text-[var(--text-muted)]">STATUS ({gitState.branch})</div>
+                                                <button onClick={fetchGit} className="hover:text-[var(--accent)]"><Icon n="refresh-cw" s={14}/></button>
+                                            </div>
+                                            <pre className="flex-1 bg-[var(--input-bg)] p-3 rounded border border-[var(--border)] font-mono text-[10px] text-[var(--accent)] overflow-auto">{gitState.status || "Clean working directory"}</pre>
+                                        </div>
+                                        <div className="glass p-4 rounded-lg bg-[var(--panel)]">
+                                            <div className="flex gap-2 mb-3">
+                                                <button onClick={() => gitAction('fetch')} className="flex-1 py-1.5 bg-[var(--input-bg)] border border-[var(--border)] rounded text-[10px] hover:border-[var(--text-muted)]">FETCH</button>
+                                                <button onClick={() => gitAction('pull')} className="flex-1 py-1.5 bg-[var(--input-bg)] border border-[var(--border)] rounded text-[10px] hover:border-[var(--text-muted)]">PULL</button>
+                                                <button onClick={() => gitAction('push')} className="flex-1 py-1.5 bg-[var(--accent)] text-white rounded text-[10px] font-bold">PUSH</button>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <input id="commit" placeholder="Commit message..." className="flex-1 bg-[var(--input-bg)] px-2 py-1.5 rounded border border-[var(--border)] text-xs outline-none focus:border-[var(--accent)]"/>
+                                                <button onClick={() => gitAction('commit', document.getElementById('commit').value)} className="px-3 bg-[var(--input-bg)] border border-[var(--border)] hover:bg-[var(--accent)] hover:text-white rounded text-[10px] font-bold transition-colors">OK</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="flex-1 glass p-4 rounded-lg flex flex-col bg-[var(--panel)]">
+                                        <div className="text-xs font-bold text-[var(--text-muted)] mb-4">COMMIT HISTORY</div>
+                                        <div className="flex-1 overflow-auto font-mono text-[11px] space-y-2">
+                                            {gitState.log.split('\n').map((l, i) => (
+                                                <div key={i} className="flex gap-3 text-[var(--text-muted)] border-b border-[var(--border)] pb-1">
+                                                    <span className="text-[var(--accent)] font-bold">{l.split(' ')[0]}</span>
+                                                    <span>{l.substring(l.indexOf(' ')+1)}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {tab === 'terminal' && <Terminal theme={config.theme} />}
+
+                            {tab === 'backups' && (
+                                <div className="p-8 overflow-y-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    {backups.map(b => (
+                                        <div key={b.name} className="glass p-5 rounded-lg flex flex-col justify-between group bg-[var(--panel)] border border-[var(--border)] hover:border-[var(--accent)] transition-colors">
+                                            <div>
+                                                <div className="font-bold text-[var(--text-main)] mb-1 group-hover:text-[var(--accent)] transition-colors break-all">{b.name}</div>
+                                                <div className="text-xs text-[var(--text-muted)] mono">{new Date(b.time * 1000).toLocaleString()}</div>
+                                            </div>
+                                            <button onClick={() => { setStatus("Restoring..."); fetch(`${API}/api/backups/restore`, {method:'POST', body:JSON.stringify({name:b.name})}).then(() => setStatus("Restored!")); }} 
+                                                className="mt-4 w-full py-2 bg-[var(--input-bg)] border border-[var(--border)] rounded text-xs hover:bg-[var(--accent)] hover:text-white transition-colors font-bold">
+                                                RESTORE THIS VERSION
+                                            </button>
+                                        </div>
+                                    ))}
+                                    {backups.length === 0 && <div className="text-[var(--text-muted)] col-span-3 text-center py-10">No backups found.</div>}
+                                </div>
+                            )}
+                            
+                            {tab === 'settings' && (
+                                <div className="p-8 max-w-3xl space-y-6">
+                                    <div className="glass p-6 rounded-lg bg-[var(--panel)]">
+                                        <h3 className="text-lg font-bold mb-4 text-[var(--text-main)]">Appearance</h3>
+                                        <div className="flex gap-4">
+                                            <button onClick={() => updateConfig('theme', 'dark')} className={`flex-1 p-4 rounded border ${config.theme==='dark' ? 'border-[var(--accent)] bg-[var(--input-bg)]' : 'border-[var(--border)] opacity-60'}`}>
+                                                <div className="font-bold mb-1">Dark Mode</div>
+                                                <div className="text-xs text-[var(--text-muted)]">Default high contrast dark theme</div>
+                                            </button>
+                                            <button onClick={() => updateConfig('theme', 'light')} className={`flex-1 p-4 rounded border ${config.theme==='light' ? 'border-[var(--accent)] bg-zinc-100 text-black' : 'border-[var(--border)] opacity-60'}`}>
+                                                <div className="font-bold mb-1">Light Mode</div>
+                                                <div className="text-xs text-[var(--text-muted)]">Clean bright theme</div>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="glass p-6 rounded-lg bg-[var(--panel)] flex items-center justify-between">
+                                        <div>
+                                            <div className="font-bold text-[var(--text-main)]">Auto-Clear Logs</div>
+                                            <div className="text-xs text-[var(--text-muted)]">Clear execution logs automatically before running new commands</div>
+                                        </div>
+                                        <div onClick={() => updateConfig('clear_logs_on_execute', !config.clear_logs_on_execute)} 
+                                             className={`w-12 h-6 rounded-full cursor-pointer transition-colors relative ${config.clear_logs_on_execute ? 'bg-[var(--accent)]' : 'bg-[var(--border)]'}`}>
+                                            <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all shadow-sm ${config.clear_logs_on_execute ? 'left-7' : 'left-1'}`}></div>
+                                        </div>
+                                    </div>
+
+                                    <div className="glass p-6 rounded-lg space-y-4 bg-[var(--panel)]">
+                                        <div className="flex justify-between items-center">
+                                            <label className="text-sm font-bold text-[var(--text-main)]">System Prompt Template</label>
+                                            <button onClick={() => fetch(`${API}/api/config`, {method:'POST', body:JSON.stringify(config)}).then(() => setStatus("Saved"))} 
+                                                className="px-4 py-1.5 bg-[var(--accent)] text-white font-bold rounded text-xs hover:opacity-90">SAVE CHANGES</button>
+                                        </div>
+                                        <textarea className="w-full h-80 bg-[var(--input-bg)] border border-[var(--border)] rounded p-4 text-xs mono text-[var(--text-main)] focus:border-[var(--accent)] outline-none"
+                                            value={config.system_prompt_template}
+                                            onChange={e => setConfig({...config, system_prompt_template: e.target.value})} />
+                                    </div>
+                                </div>
+                            )}
+                        </main>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<ErrorBoundary><App /></ErrorBoundary>);
+    </script>
+</body>
+</html>
